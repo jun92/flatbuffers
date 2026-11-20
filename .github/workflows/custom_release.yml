@@ -71,6 +71,7 @@ jobs:
           dotnet pack net/FlatBuffers/Google.FlatBuffers.csproj \
             -c Release \
             -o ./nupkgs \
+            -p:PackageId=Jun92.FlatBuffers \
             -p:PackageVersion=${{ needs.prepare.outputs.version }} \
             -p:RepositoryUrl=https://github.com/${{ github.repository }}
 
@@ -88,27 +89,27 @@ jobs:
           path: ./nupkgs/*.nupkg
 
   # 3. 플랫폼별 flatc 빌드 (Linux, Windows, macOS Universal)
-  build-flatc:
-    needs: prepare
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            platform: Linux.x64
-            cmake_args: ""
-            binary_path: build/flatc
-            archive_name: flatc-linux-x64.zip
-          - os: windows-latest
-            platform: Windows.x64
-            cmake_args: "-A x64"
-            binary_path: build/Release/flatc.exe
-            archive_name: flatc-windows-x64.zip
-          - os: macos-latest
-            platform: macOS.universal
-            cmake_args: '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"'
-            binary_path: build/flatc
-            archive_name: flatc-macos-universal.zip
+  # build-flatc:
+  #   needs: prepare
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - os: ubuntu-latest
+  #           platform: Linux.x64
+  #           cmake_args: ""
+  #           binary_path: build/flatc
+  #           archive_name: flatc-linux-x64.zip
+  #         - os: windows-latest
+  #           platform: Windows.x64
+  #           cmake_args: "-A x64"
+  #           binary_path: build/Release/flatc.exe
+  #           archive_name: flatc-windows-x64.zip
+  #         - os: macos-latest
+  #           platform: macOS.universal
+  #           cmake_args: '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"'
+  #           binary_path: build/flatc
+  #           archive_name: flatc-macos-universal.zip
 
     runs-on: ${{ matrix.os }}
     steps:
