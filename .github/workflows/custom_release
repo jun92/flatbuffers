@@ -1,0 +1,157 @@
+name: Build & Release C# NuGet and flatc
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '릴리즈 버전 (예: 25.9.23, v 제외)'
+        required: true
+        type: string
+
+permissions:
+  contents: write  # GitHub Release 생성 권한
+  packages: write  # GitHub Packages (NuGet) 업로드 권한
+
+jobs:
+  # 1. 버전 정보 추출
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      tag: ${{ steps.get_version.outputs.tag }}
+    steps:
+      - name: Determine Version
+        id: get_version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+            TAG="v${VERSION}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#v}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+  # 2. C# NuGet 패키지 빌드 및 GitHub Packages 배포
+  publish-nuget:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x' # 필요에 따라 9.0.x 또는 10.0.x로 변경 가능
+
+      - name: Pack C# NuGet Package
+        run: |
+          dotnet pack net/FlatBuffers/Google.FlatBuffers.csproj \
+            -c Release \
+            -o ./nupkgs \
+            -p:PackageVersion=${{ needs.prepare.outputs.version }} \
+            -p:RepositoryUrl=https://github.com/${{ github.repository }}
+
+      - name: Push to GitHub Packages
+        run: |
+          dotnet nuget push ./nupkgs/*.nupkg \
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --api-key "${{ secrets.GITHUB_TOKEN }}" \
+            --skip-duplicate
+
+      - name: Upload NuGet Artifact (Optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-package
+          path: ./nupkgs/*.nupkg
+
+  # 3. 플랫폼별 flatc 빌드
+  build-flatc:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: Linux.x64
+            cmake_args: ""
+            binary_path: build/flatc
+            archive_name: flatc-linux-x64.zip
+          - os: windows-latest
+            platform: Windows.x64
+            cmake_args: "-A x64"
+            binary_path: build/Release/flatc.exe
+            archive_name: flatc-windows-x64.zip
+          - os: macos-latest
+            platform: macOS.universal
+            cmake_args: '-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"'
+            binary_path: build/flatc
+            archive_name: flatc-macos-universal.zip
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFLATBUFFERS_BUILD_TESTS=OFF \
+            -DFLATBUFFERS_BUILD_FLATHASH=OFF \
+            ${{ matrix.cmake_args }}
+
+      - name: Build flatc
+        shell: bash
+        run: cmake --build build --target flatc --config Release --parallel
+
+      - name: Package flatc (Linux / macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp ${{ matrix.binary_path }} dist/
+          chmod +x dist/flatc
+          cd dist && zip -r ../${{ matrix.archive_name }} flatc
+
+      - name: Package flatc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item "${{ matrix.binary_path }}" -Destination "dist/flatc.exe"
+          Compress-Archive -Path "dist/flatc.exe" -DestinationPath "${{ matrix.archive_name }}"
+
+      - name: Upload flatc Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatc-${{ matrix.platform }}
+          path: ${{ matrix.archive_name }}
+
+  # 4. GitHub Release 생성 및 에셋 업로드
+  create-release:
+    needs: [prepare, publish-nuget, build-flatc]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: FlatBuffers ${{ needs.prepare.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            release-assets/flatc-*.zip
+            release-assets/*.nupkg
