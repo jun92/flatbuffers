@@ -14,6 +14,7 @@ on:
 permissions:
   contents: write  # GitHub Release 생성 및 에셋 업로드 권한
   packages: write  # GitHub Packages (NuGet) 업로드 권한
+  id-token: write  # for nuget auth
 
 jobs:
   # 1. 버전 정보 결정 (태그 푸시 > 수동 입력 > base.h 자동 파싱)
@@ -87,7 +88,7 @@ jobs:
         uses: NuGet/login@v1
         with:
           user: syncnet # 이메일이 아닌 nuget.org 유저명
-          
+
       - name: Push to nuget.org
         run: |
           dotnet nuget push ./nupkgs/*.nupkg \
